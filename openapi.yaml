@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: 曙光军训记录 API
+  version: 1.1.0
+  description: 集训素材登记、上传、公开展示与管理接口
+servers:
+  - url: http://118.195.164.141
+    description: 当前公网联调环境（正式发布时替换为 HTTPS 域名）
+  - url: http://localhost:3000
+    description: 本地开发环境
+paths:
+  /api/health:
+    get:
+      summary: 健康检查
+      responses: { '200': { description: OK } }
+  /api/config:
+    get:
+      summary: 获取上传数量、图片和视频大小限制
+      responses: { '200': { description: 当前上传配置 } }
+  /api/public/upload/{uploadToken}:
+    get:
+      summary: 扫码后根据上传 Token 获取活动和连队
+      parameters: [{ name: uploadToken, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 活动和连队信息 }, '404': { description: 上传二维码无效 } }
+  /api/registrations:
+    post:
+      summary: 扫码登记学员
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadToken, name, team, className]
+              properties:
+                uploadToken: { type: string }
+                name: { type: string, example: 兰天笑 }
+                team: { type: string, example: '5' }
+                className: { type: string, example: '1' }
+      responses: { '201': { description: 登记成功 }, '409': { description: 重复登记 } }
+  /api/media/upload:
+    post:
+      summary: 批量上传照片或视频
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [registrationToken, files]
+              properties:
+                registrationToken: { type: string }
+                files: { type: array, maxItems: 20, items: { type: string, format: binary } }
+      responses: { '201': { description: 上传成功 } }
+  /api/public/{publicToken}:
+    get:
+      summary: 获取公开相册
+      parameters: [{ name: publicToken, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 相册内容 } }
+  /api/media/{id}/like:
+    post:
+      summary: 点赞
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [deviceKey], properties: { deviceKey: { type: string } } } } }
+      responses: { '200': { description: 点赞结果 } }
+  /api/media/{id}/comments:
+    post:
+      summary: 留言
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [nickname, content], properties: { nickname: { type: string }, content: { type: string } } } } }
+      responses: { '201': { description: 留言成功 } }
+  /api/media/{id}/reports:
+    post:
+      summary: 举报素材
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string }, contact: { type: string } } } } }
+      responses: { '201': { description: 举报成功 } }
+  /api/admin/login:
+    post:
+      summary: 管理员登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+      responses: { '200': { description: 返回30天有效的 Bearer Token }, '401': { description: 密码错误 } }
+  /api/admin/dashboard:
+    get:
+      summary: 获取后台统计数据
+      security: [{ adminBearer: [] }]
+      responses: { '200': { description: 活动、连队、登记、素材、举报和留言统计 }, '401': { description: 未登录或登录失效 } }
+  /api/admin/activities:
+    get:
+      summary: 获取活动及其连队列表
+      security: [{ adminBearer: [] }]
+      responses: { '200': { description: 活动和连队列表 } }
+    post:
+      summary: 创建活动
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+                description: { type: string, maxLength: 500 }
+      responses: { '201': { description: 活动创建成功 }, '400': { description: 活动名称无效 } }
+  /api/admin/teams:
+    post:
+      summary: 在活动中创建连队并生成上传/浏览 Token
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activityId, name]
+              properties:
+                activityId: { type: integer }
+                name: { type: string, example: '5' }
+      responses: { '201': { description: 连队、公开链接和上传链接 }, '409': { description: 同活动下连队重复 } }
+  /api/admin/qr/{type}/{value}:
+    get:
+      summary: 根据连队 Token 生成上传或相册二维码
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [upload, register, gallery] } }
+        - { name: value, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: PNG 二维码
+          content: { image/png: { schema: { type: string, format: binary } } }
+        '404': { description: 二维码参数不存在 }
+  /api/admin/media:
+    get:
+      summary: 获取全部或指定状态的素材
+      security: [{ adminBearer: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [published, hidden, pending, rejected] } }
+      responses: { '200': { description: 包含连队、上传者和班级的素材列表 } }
+  /api/admin/media/{id}:
+    patch:
+      summary: 修改素材审核状态
+      security: [{ adminBearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [published, hidden, pending, rejected] }
+      responses: { '200': { description: 状态修改成功 }, '404': { description: 素材不存在 } }
+  /api/admin/comments:
+    get:
+      summary: 获取全部留言
+      security: [{ adminBearer: [] }]
+      responses: { '200': { description: 留言列表 } }
+  /api/admin/comments/{id}:
+    patch:
+      summary: 隐藏或恢复留言
+      security: [{ adminBearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [published, hidden] }
+      responses: { '200': { description: 状态修改成功 } }
+  /api/admin/reports:
+    get:
+      summary: 获取全部举报
+      security: [{ adminBearer: [] }]
+      responses: { '200': { description: 举报列表 } }
+  /api/admin/reports/{id}:
+    patch:
+      summary: 处理举报
+      security: [{ adminBearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, resolved, ignored] }
+      responses: { '200': { description: 举报状态修改成功 } }
+components:
+  securitySchemes:
+    adminBearer: { type: http, scheme: bearer }

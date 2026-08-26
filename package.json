@@ -1,0 +1,22 @@
+{
+  "name": "sugon-training-record",
+  "version": "1.0.0",
+  "private": true,
+  "description": "曙光军训记录：学员注册、照片视频上传、公开相册和审核管理平台",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2",
+    "qrcode": "^1.5.4"
+  }
+}
