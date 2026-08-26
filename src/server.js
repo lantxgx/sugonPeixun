@@ -62,6 +62,14 @@ function getTeamByUploadToken(uploadToken) { return db.prepare('SELECT * FROM te
 function getTeamByPublicToken(publicToken) { return db.prepare('SELECT * FROM teams WHERE public_token = ?').get(publicToken); }
 function teamSummary(team) { return team && { id: team.id, name: team.name, activityId: team.activity_id, publicToken: team.public_token, uploadToken: team.upload_token }; }
 function cleanupFiles(files = []) { for (const file of files) { try { if (existsSync(file.path)) unlinkSync(file.path); } catch {} } }
+function publicMediaWithInteractions(media, baseUrl) {
+  const item = publicMedia(media, baseUrl);
+  item.likes = db.prepare('SELECT COUNT(*) count FROM likes WHERE media_id=?').get(media.id).count;
+  item.reports = db.prepare('SELECT COUNT(*) count FROM reports WHERE media_id=?').get(media.id).count;
+  item.comments = db.prepare("SELECT id,nickname,content,created_at FROM comments WHERE media_id=? AND status='published' ORDER BY id DESC").all(media.id);
+  item.danmaku = db.prepare("SELECT id,nickname,content,color,created_at FROM danmaku WHERE media_id=? AND status='published' ORDER BY id DESC LIMIT 120").all(media.id);
+  return item;
+}
 function parseModelJson(value) {
   const text = String(value || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const start = text.indexOf('{'); const end = text.lastIndexOf('}');
@@ -240,13 +248,7 @@ app.get('/api/public/gallery', (req, res) => {
     name: activity.name,
     teams: db.prepare('SELECT * FROM teams WHERE activity_id=? ORDER BY id').all(activity.id).map((team) => ({
       ...teamSummary(team),
-      media: db.prepare("SELECT * FROM media WHERE team_id=? AND status='published' ORDER BY id DESC").all(team.id).map((m) => {
-        const item = publicMedia(m, absoluteBase(req));
-        item.likes = db.prepare('SELECT COUNT(*) count FROM likes WHERE media_id=?').get(m.id).count;
-        item.reports = db.prepare('SELECT COUNT(*) count FROM reports WHERE media_id=?').get(m.id).count;
-        item.comments = db.prepare("SELECT id,nickname,content,created_at FROM comments WHERE media_id=? AND status='published' ORDER BY id DESC").all(m.id);
-        return item;
-      })
+      media: db.prepare("SELECT * FROM media WHERE team_id=? AND status='published' ORDER BY id DESC").all(team.id).map((m) => publicMediaWithInteractions(m, absoluteBase(req)))
     }))
   }));
   res.json({ ok: true, activities });
@@ -256,13 +258,7 @@ app.get('/api/public/:publicToken', (req, res) => {
   const team = getTeamByPublicToken(req.params.publicToken);
   if (!team) return jsonError(res, 404, '公开相册不存在');
   const activity = getActivity(team.activity_id);
-  const media = db.prepare("SELECT * FROM media WHERE team_id = ? AND status = 'published' ORDER BY id DESC").all(team.id).map((m) => {
-    const item = publicMedia(m, absoluteBase(req));
-    item.likes = db.prepare('SELECT COUNT(*) count FROM likes WHERE media_id = ?').get(m.id).count;
-    item.reports = db.prepare('SELECT COUNT(*) count FROM reports WHERE media_id = ?').get(m.id).count;
-    item.comments = db.prepare("SELECT id, nickname, content, created_at FROM comments WHERE media_id = ? AND status = 'published' ORDER BY id DESC").all(m.id);
-    return item;
-  });
+  const media = db.prepare("SELECT * FROM media WHERE team_id = ? AND status = 'published' ORDER BY id DESC").all(team.id).map((m) => publicMediaWithInteractions(m, absoluteBase(req)));
   res.json({ ok: true, activity: { id: activity.id, name: activity.name }, team: teamSummary(team), media });
 });
 
@@ -351,6 +347,15 @@ app.post('/api/media/:id/comments', (req, res) => {
   const result = db.prepare('INSERT INTO comments (media_id, nickname, content, created_at) VALUES (?, ?, ?, ?)').run(media.id, nickname, content, now());
   res.status(201).json({ ok: true, comment: { id: result.lastInsertRowid, nickname, content, createdAt: now() } });
 });
+app.post('/api/media/:id/danmaku', (req, res) => {
+  const media = db.prepare("SELECT id FROM media WHERE id = ? AND status = 'published'").get(Number(req.params.id));
+  const nickname = safeText(req.body?.nickname, 30); const content = safeText(req.body?.content, 80);
+  const requestedColor = safeText(req.body?.color, 20); const color = /^#[0-9a-f]{6}$/i.test(requestedColor) ? requestedColor : '#ffffff';
+  if (!media) return jsonError(res, 404, '素材不存在');
+  if (!nickname || !content) return jsonError(res, 400, '昵称和弹幕内容不能为空');
+  const result = db.prepare('INSERT INTO danmaku (media_id, nickname, content, color, created_at) VALUES (?, ?, ?, ?, ?)').run(media.id, nickname, content, color, now());
+  res.status(201).json({ ok: true, danmaku: { id: result.lastInsertRowid, nickname, content, color, createdAt: now() } });
+});
 app.post('/api/media/:id/reports', (req, res) => {
   const media = db.prepare('SELECT id FROM media WHERE id = ?').get(Number(req.params.id));
   const reason = safeText(req.body?.reason, 200); const contact = safeText(req.body?.contact, 100);
@@ -386,6 +391,12 @@ app.delete('/api/admin/media/:id', adminOnly, (req, res) => {
   res.json({ ok: true, deleted: media.id });
 });
 app.get('/api/admin/comments', adminOnly, (_req, res) => res.json({ ok: true, comments: db.prepare('SELECT c.*, m.original_name FROM comments c JOIN media m ON m.id=c.media_id ORDER BY c.id DESC').all() }));
+app.get('/api/admin/danmaku', adminOnly, (_req, res) => res.json({ ok: true, danmaku: db.prepare('SELECT d.*, m.original_name FROM danmaku d JOIN media m ON m.id=d.media_id ORDER BY d.id DESC').all() }));
+app.patch('/api/admin/danmaku/:id', adminOnly, (req, res) => {
+  const status = ['published','hidden'].includes(req.body?.status) ? req.body.status : null;
+  if (!status) return jsonError(res, 400, '弹幕状态无效');
+  db.prepare('UPDATE danmaku SET status=? WHERE id=?').run(status, Number(req.params.id)); res.json({ ok: true, status });
+});
 app.patch('/api/admin/comments/:id', adminOnly, (req, res) => {
   const status = ['published','hidden'].includes(req.body?.status) ? req.body.status : null;
   if (!status) return jsonError(res, 400, '留言状态无效');
@@ -399,7 +410,7 @@ app.patch('/api/admin/reports/:id', adminOnly, (req, res) => {
 });
 
 app.use(express.static(join(ROOT, 'public'), { extensions: ['html'] }));
-app.get(['/admin', '/register', '/upload', '/gallery'], (_req, res) => res.sendFile(join(ROOT, 'public', 'index.html')));
+app.get(['/admin', '/register', '/upload', '/gallery', '/guide'], (_req, res) => res.sendFile(join(ROOT, 'public', 'index.html')));
 app.use((err, _req, res, _next) => { console.error(err); if (!res.headersSent) res.status(500).json({ ok: false, error: '服务器内部错误' }); });
 
 app.listen(PORT, HOST, () => console.log(`曙光军训记录 running at http://${HOST}:${PORT}`));

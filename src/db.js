@@ -70,6 +70,15 @@ export function createDatabase(filePath) {
       status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved','ignored')),
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS danmaku (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      nickname TEXT NOT NULL,
+      content TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#ffffff',
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('published','hidden'))
+    );
   `);
 
   const activity = db.prepare('SELECT id FROM activities LIMIT 1').get();
